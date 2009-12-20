@@ -7,6 +7,9 @@ use Config::INI::Reader;
 use Archive::Tar;
 use Parallel::ForkManager;
 
+my $max_procs = $ARGV[0] || 10;
+my $pm = new Parallel::ForkManager($max_procs);
+
 # Used to figure out which files to get, based on the user's OS
 my $original_extension = '.exe';
 my $new_extension = '.tar.bz2';
@@ -38,79 +41,47 @@ my %ini_hash = %{Config::INI::Reader->read_string($ini)};
 
 # Files to download for NDS development
 # Note: The script currently depends on devkitARM and ndsexamples being first and second in this array.
-my @files =
+my %files =
     (
-     'devkitARM',
-     'ndsexamples',
-     'libnds',
-     'libndsfat',
-     'maxmodds',
-     'dswifi',
-     'defaultarm7',
-     'filesystem',
+     'devkitARM' => [],
+     'ndsexamples' => ['examples','ds'],
+     'libnds' => ['libnds'],
+     'libndsfat' => ['libnds'],
+     'maxmodds' => ['libnds'],
+     'dswifi' => ['libnds'],
+     'defaultarm7' => ['libnds'],
+     'filesystem' => ['libnds'],
     );
 
 # Base URL for all files
 my $download_base = $ini_hash{devkitProUpdate}{URL};
 
-my $pm = new Parallel::ForkManager(10);
+mkdir 'examples';
+mkdir 'examples/ds';
+mkdir 'libnds';
+
 # Download each file
-foreach(@files)
-{
+foreach(keys %files)
+{    
     $pm->start and next;
+    
     print "Downloading $_ v$ini_hash{$_}{Version}...\n";
     my $file = $ini_hash{$_}{File};
     my $url = "$download_base/$file";
     mirror($url,$file) or die $!;
     print "Finished downloading $_ v$ini_hash{$_}{Version}.\n";
+
+    my $file_prefix = "";
+    my $f = $ini_hash{$_}{File};
+    print "Extracting $f...\n";
+    map { chdir "$_"; $file_prefix .= "../" } @{$files{$_}};
+    Archive::Tar->extract_archive($file_prefix."$f",1);
+    map { chdir '..' } @{$files{$_}};
+    print "Finished extracting $f...\n";
+    
     $pm->finish;
 }
 $pm->wait_all_children;
-
-$pm->set_max_procs(2);
-my $f = $ini_hash{shift(@files)}{File};
-{
-    $pm->start and next;
-    # Extract devkitARM into its own directory
-    print "Extracting $f...\n";
-    Archive::Tar->extract_archive("$f",1);
-    print "Finished extracting $f...\n";
-    $pm->finish;
-}
-
-# Extract the examples into their own directory
-mkdir 'examples';
-chdir 'examples';
-mkdir 'ds';
-chdir 'ds';
-
-$f = $ini_hash{shift(@files)}{File};
-{
-    $pm->start and next;
-    print "Extracting $f...\n";
-    Archive::Tar->extract_archive("../../$f",1);
-    print "Finished extracting $f...\n";
-    $pm->finish;
-}
-
-chdir '../..';
-
-# Extract all of the libraries under the 'libnds' directory
-# devkitARM and ndsexamples have been removed from this array by the shift() function.
-mkdir 'libnds';
-chdir 'libnds';
-
-foreach(@files)
-{
-    $pm->start and next;
-    $f = $ini_hash{$_}{File};
-    print "Extracting $f...\n";
-    Archive::Tar->extract_archive("../$f",1);
-    print "Finished extracting $f...\n";
-    $pm->finish;
-}
-$pm->wait_all_children;
-chdir '..';
 
 # Either set up the user's environment variables, or tell him to do so.
 my $current_dir = getcwd;
