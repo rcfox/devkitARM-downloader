@@ -5,6 +5,7 @@ use Cwd;
 use LWP::Simple;
 use Config::INI::Reader;
 use Archive::Tar;
+use Parallel::ForkManager;
 
 # Used to figure out which files to get, based on the user's OS
 my $original_extension = '.exe';
@@ -52,42 +53,63 @@ my @files =
 # Base URL for all files
 my $download_base = $ini_hash{devkitProUpdate}{URL};
 
+my $pm = new Parallel::ForkManager(10);
 # Download each file
 foreach(@files)
 {
+    $pm->start and next;
     print "Downloading $_ v$ini_hash{$_}{Version}...\n";
     my $file = $ini_hash{$_}{File};
     my $url = "$download_base/$file";
     mirror($url,$file) or die $!;
+    print "Finished downloading $_ v$ini_hash{$_}{Version}.\n";
+    $pm->finish;
 }
+$pm->wait_all_children;
 
-my $f;
-
-# Extract devkitARM into its own directory
-$f = $ini_hash{shift(@files)}{File};
-print "Extracting $f...\n";
-Archive::Tar->extract_archive("$f",1);
+$pm->set_max_procs(2);
+my $f = $ini_hash{shift(@files)}{File};
+{
+    $pm->start and next;
+    # Extract devkitARM into its own directory
+    print "Extracting $f...\n";
+    Archive::Tar->extract_archive("$f",1);
+    print "Finished extracting $f...\n";
+    $pm->finish;
+}
 
 # Extract the examples into their own directory
 mkdir 'examples';
 chdir 'examples';
 mkdir 'ds';
 chdir 'ds';
+
 $f = $ini_hash{shift(@files)}{File};
-print "Extracting $f...\n";
-Archive::Tar->extract_archive("../../$f",1);
+{
+    $pm->start and next;
+    print "Extracting $f...\n";
+    Archive::Tar->extract_archive("../../$f",1);
+    print "Finished extracting $f...\n";
+    $pm->finish;
+}
+
 chdir '../..';
 
 # Extract all of the libraries under the 'libnds' directory
 # devkitARM and ndsexamples have been removed from this array by the shift() function.
 mkdir 'libnds';
 chdir 'libnds';
+
 foreach(@files)
 {
+    $pm->start and next;
     $f = $ini_hash{$_}{File};
     print "Extracting $f...\n";
     Archive::Tar->extract_archive("../$f",1);
+    print "Finished extracting $f...\n";
+    $pm->finish;
 }
+$pm->wait_all_children;
 chdir '..';
 
 # Either set up the user's environment variables, or tell him to do so.
